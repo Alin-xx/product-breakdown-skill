@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>OpenAI Codex Harness 产品架构拆解</title>
+  <style>
+    :root{color-scheme:light dark;--bg:#f5f7f8;--card:#fff;--text:#18211f;--muted:#66736f;--line:#dde5e2;--brand:#087f5b;--ok:#16794b;--infer:#a86500;--suggest:#1769aa;--unknown:#667085;--risk:#b42318}@media(prefers-color-scheme:dark){:root{--bg:#0d1513;--card:#14201d;--text:#edf5f2;--muted:#a6b8b2;--line:#2b3c37;--brand:#55d7ad;--ok:#58c993;--infer:#f3b64d;--suggest:#67b7f7;--unknown:#aab5c8;--risk:#ff8b82}}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.7 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif}main{max-width:1180px;margin:auto;padding:28px}.hero,section{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:24px;margin:0 0 18px}.hero{background:linear-gradient(135deg,color-mix(in srgb,var(--brand) 13%,var(--card)),var(--card))}h1{font-size:32px;line-height:1.2;margin:0 0 10px}h2{font-size:22px;margin:0 0 14px}h3{font-size:17px;margin:22px 0 8px}p{margin:8px 0}a{color:var(--brand)}nav{display:flex;gap:8px;flex-wrap:wrap;margin-top:18px}nav a{border:1px solid var(--line);padding:5px 10px;border-radius:999px;text-decoration:none}.meta{color:var(--muted)}.tag{display:inline-block;font-size:12px;font-weight:700;border:1px solid currentColor;border-radius:999px;padding:1px 8px;margin-right:5px}.confirmed{color:var(--ok)}.inferred{color:var(--infer)}.suggested{color:var(--suggest)}.unknown{color:var(--unknown)}.risk{color:var(--risk)}.table{overflow-x:auto}table{border-collapse:collapse;width:100%;min-width:850px}th,td{border:1px solid var(--line);padding:9px;vertical-align:top;text-align:left}th{background:color-mix(in srgb,var(--brand) 9%,var(--card))}code,.eid{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.92em}.callout{border-left:4px solid var(--brand);padding:10px 14px;background:color-mix(in srgb,var(--brand) 7%,var(--card));border-radius:8px}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.grid>div{border:1px solid var(--line);padding:14px;border-radius:12px}.mermaid{background:var(--card);overflow:auto}.legend{color:var(--muted);font-size:13px}.top{position:fixed;right:18px;bottom:18px;border:1px solid var(--line);background:var(--card);padding:8px 12px;border-radius:999px;text-decoration:none}@media(max-width:760px){main{padding:14px}.grid{grid-template-columns:1fr}h1{font-size:26px}}
+  </style>
+</head>
+<body><main id="top">
+  <header class="hero">
+    <h1>OpenAI Codex Harness 产品架构拆解</h1>
+    <p>基于 openai/codex 官方源码，拆解 CLI/TUI、app-server、Session loop、工具路由、上下文、线程持久化、多 Agent、权限审批与沙箱。</p>
+    <p class="meta">取证版本：commit <code>a8468330bb5f45e9f4d2ec630b01ea8c52908be3</code> · main · 取证日期 2026-08-24 · 6,519 个 tracked files · source build 版本字段为 0.0.0/0.0.0-dev</p>
+    <p><span class="tag confirmed">已确认</span>源码或官方 OpenAI 文档直证 <span class="tag inferred">合理推断</span>多条证据推导 <span class="tag suggested">建议设计</span>To-Be <span class="tag unknown">未知</span>证据不足</p>
+    <nav><a href="#summary">摘要</a><a href="#evidence">证据</a><a href="#e2e">端到端</a><a href="#layers">九层</a><a href="#relations">Agent/工具</a><a href="#entities">实体</a><a href="#panorama">全景图</a><a href="#risks">风险</a><a href="#unknowns">未知</a></nav>
+  </header>
+
+  <section id="summary"><h2>1. 执行摘要</h2>
+    <div class="callout"><strong>结论：</strong>开源 Codex Harness 是以 Rust <code>codex-core</code> 为业务内核、以 Thread/Turn/Item 与事件流为交互协议、以动态 ToolRouter 连接内建/MCP/插件/托管工具、以权限配置+审批+OS 沙箱约束副作用的本地 Agent 平台。TUI、exec、app-server 和外部客户端是不同投影面。</div>
+    <div class="grid"><div><strong>控制核心</strong><br><span class="tag confirmed">已确认</span><code>run_turn</code> 循环：模型返回工具调用则执行并把结果送回下一次采样；仅返回消息且无后续输入则结束。</div><div><strong>协议核心</strong><br><span class="tag confirmed">已确认</span>app-server 通过 JSON-RPC 暴露 Thread/Turn/Item、流式通知、审批与配置。</div><div><strong>安全核心</strong><br><span class="tag confirmed">已确认</span>权限 profile、AskForApproval、Guardian reviewer、exec policy、网络策略与平台沙箱分层协作。</div></div>
+    <p><span class="tag inferred">合理推断</span>Codex 的产品重心是“稳定的执行控制面 + 丰富的宿主集成”，而不是让所有能力都成为同构插件；这带来更强协议/治理深度，也提高 core 与兼容表面的工程复杂度。</p>
+  </section>
+
+  <section id="evidence"><h2>2. 证据与范围</h2>
+    <p>本次完成静态源码、仓库内文档与官方 OpenAI Docs 交叉取证；没有登录账号、调用模型、运行 TUI 或执行完整 Rust 测试，所以不确认闭源服务端调度、模型内部实现、计费策略与真实 UI 性能。</p>
+    <div class="table"><table><thead><tr><th>ID</th><th>直接证据</th><th>可确认事实</th><th>等级</th></tr></thead><tbody>
+      <tr><td class="eid">CDX-E01</td><td><a href="https://github.com/openai/codex/blob/a8468330bb5f45e9f4d2ec630b01ea8c52908be3/README.md">仓库 README</a></td><td>Codex CLI 是本地运行的编码 Agent；CLI、IDE、App、Web 是不同入口。</td><td class="confirmed">已确认</td></tr>
+      <tr><td class="eid">CDX-E02</td><td><a href="https://learn.chatgpt.com/docs/codex/cli">官方 Codex CLI 文档</a></td><td>检查/编辑/运行代码；可选模型、推理强度、权限；支持交互和 CI。</td><td class="confirmed">已确认</td></tr>
+      <tr><td class="eid">CDX-E03</td><td><a href="https://learn.chatgpt.com/docs/app-server">官方 App Server 文档</a></td><td>app-server 支持深度集成：认证、历史、审批、流式事件；Thread/Turn/Item 生命周期。</td><td class="confirmed">已确认</td></tr>
+      <tr><td class="eid">CDX-E04</td><td><a href="https://github.com/openai/codex/blob/a8468330bb5f45e9f4d2ec630b01ea8c52908be3/codex-rs/app-server/README.md">app-server/README.md</a></td><td>JSON-RPC 传输、初始化、API、事件、审批、Skills、Apps 与认证。</td><td class="confirmed">已确认</td></tr>
+      <tr><td class="eid">CDX-E05</td><td><a href="https://github.com/openai/codex/blob/a8468330bb5f45e9f4d2ec630b01ea8c52908be3/codex-rs/core/src/session/turn.rs">session/turn.rs</a></td><td>真实采样/工具/后续输入/压缩/停止循环。</td><td class="confirmed">已确认</td></tr>
+      <tr><td class="eid">CDX-E06</td><td><a href="https://github.com/openai/codex/blob/a8468330bb5f45e9f4d2ec630b01ea8c52908be3/codex-rs/core/src/tools/spec_plan.rs">tools/spec_plan.rs</a></td><td>按模型、功能、环境、权限动态构建 ToolRouter；合并内建、MCP、扩展、动态与托管工具。</td><td class="confirmed">已确认</td></tr>
+      <tr><td class="eid">CDX-E07</td><td><a href="https://github.com/openai/codex/blob/a8468330bb5f45e9f4d2ec630b01ea8c52908be3/codex-rs/core/src/tools/registry.rs">tools/registry.rs</a></td><td>工具注册、暴露面、执行契约、碰撞处理、hooks 与遥测。</td><td class="confirmed">已确认</td></tr>
+      <tr><td class="eid">CDX-E08</td><td><a href="https://github.com/openai/codex/blob/a8468330bb5f45e9f4d2ec630b01ea8c52908be3/codex-rs/thread-store/README.md">thread-store/README.md</a></td><td>JSONL 为本地 canonical history，SQLite 为可查询元数据；LiveThread/ThreadManager 统一写入。</td><td class="confirmed">已确认</td></tr>
+      <tr><td class="eid">CDX-E09</td><td><a href="https://github.com/openai/codex/blob/a8468330bb5f45e9f4d2ec630b01ea8c52908be3/codex-rs/core/src/config/permissions.rs">config/permissions.rs</a> / <a href="https://github.com/openai/codex/blob/a8468330bb5f45e9f4d2ec630b01ea8c52908be3/codex-rs/core/src/tools/approvals.rs">tools/approvals.rs</a></td><td>内建 permission profiles、网络/文件权限、审批动作与缓存键。</td><td class="confirmed">已确认</td></tr>
+      <tr><td class="eid">CDX-E10</td><td><a href="https://github.com/openai/codex/blob/a8468330bb5f45e9f4d2ec630b01ea8c52908be3/codex-rs/core/README.md">core/README.md</a></td><td>macOS Seatbelt、Linux bwrap/Landlock、Windows sandbox 的平台约束与 fail-closed 路径。</td><td class="confirmed">已确认</td></tr>
+      <tr><td class="eid">CDX-E11</td><td><a href="https://github.com/openai/codex/blob/a8468330bb5f45e9f4d2ec630b01ea8c52908be3/codex-rs/core/src/agent/mod.rs">agent/mod.rs</a> / <a href="https://github.com/openai/codex/blob/a8468330bb5f45e9f4d2ec630b01ea8c52908be3/codex-rs/core/src/session/multi_agents.rs">multi_agents.rs</a></td><td>多 Agent v2 角色、并发槽、spawn/message/followup/wait/interrupt/list 工具与模式策略。</td><td class="confirmed">已确认</td></tr>
+      <tr><td class="eid">CDX-E12</td><td><a href="https://github.com/openai/codex/blob/a8468330bb5f45e9f4d2ec630b01ea8c52908be3/codex-rs/core/src/context/mod.rs">context/mod.rs</a> / <a href="https://github.com/openai/codex/blob/a8468330bb5f45e9f4d2ec630b01ea8c52908be3/codex-rs/core/src/context_manager/history.rs">history.rs</a></td><td>结构化上下文 fragments、history snapshot、world-state diff、token 估算与归一化。</td><td class="confirmed">已确认</td></tr>
+    </tbody></table></div>
+  </section>
+
+  <section id="domains"><h2>3. 功能域</h2>
+    <div class="table"><table><thead><tr><th>功能域</th><th>用户价值</th><th>当前实现</th><th>证据</th></tr></thead><tbody>
+      <tr><td>本地编码工作台</td><td>理解仓库、编辑文件、执行命令、审查变更</td><td>CLI/TUI、apply_patch、unified exec、diff/plan/review</td><td>CDX-E01/E02/E06</td></tr>
+      <tr><td>可嵌入 Agent 平台</td><td>IDE/应用可复用完整 Codex 生命周期</td><td>app-server JSON-RPC；stdio/ws/unix；稳定/实验 API</td><td>CDX-E03/E04</td></tr>
+      <tr><td>对话与任务</td><td>新建、续接、fork、steer、interrupt、archive</td><td>Thread/Turn/Item + notifications + goal/queue</td><td>CDX-E03/E04/E08</td></tr>
+      <tr><td>工具生态</td><td>本地、MCP、Apps、Plugins、动态与 hosted 工具</td><td>每步动态 ToolRouter、暴露策略、tool search、Code Mode</td><td>CDX-E06/E07</td></tr>
+      <tr><td>上下文与个性化</td><td>AGENTS.md、skills、plugins、环境和用户指令持续生效</td><td>Contextual fragments + world-state diff + compaction/memory</td><td>CDX-E12</td></tr>
+      <tr><td>多 Agent</td><td>并行子任务、消息、复用与审查</td><td>AgentControl/Registry、v1/v2 工具表面、并发与深度限制</td><td>CDX-E11</td></tr>
+      <tr><td>安全治理</td><td>在最小权限下执行并对高风险动作请求决策</td><td>permission profiles、approval reviewer、hooks、exec policy、沙箱/网络代理</td><td>CDX-E09/E10</td></tr>
+    </tbody></table></div>
+  </section>
+
+  <section id="e2e"><h2>4. 端到端五流</h2>
+    <div class="table"><table><thead><tr><th>阶段</th><th>用户交互流</th><th>Agent 控制流</th><th>工具调用流</th><th>数据/上下文流</th><th>资产流</th><th>失败/中断</th></tr></thead><tbody>
+      <tr><td>启动/认证</td><td>运行 codex；ChatGPT 或 API Key 登录</td><td>加载 layered config、models、features</td><td>预热扩展/MCP（按配置）</td><td>读取 CODEX_HOME、项目、AGENTS.md</td><td>准备 thread store</td><td>认证/配置失败</td></tr>
+      <tr><td>Thread</td><td>新建/恢复/fork task</td><td>ThreadManager 创建或加载 CodexThread</td><td>绑定 MCP/Apps/Plugins</td><td>加载 canonical history + metadata</td><td>JSONL/SQLite 状态</td><td>实验 API 未 opt-in 被拒绝</td></tr>
+      <tr><td>Turn</td><td>输入任务，可覆盖模型/cwd/权限</td><td>创建 TurnContext，捕获 StepContext</td><td>构建该 step 的 ToolRouter</td><td>记录 user input、world-state diff、skills/plugins 注入</td><td>输入图片/文件引用</td><td>hooks/MCP 准备/压缩失败</td></tr>
+      <tr><td>Sampling</td><td>看到 reasoning/message/tool 事件</td><td>run_turn 调用 ModelClientSession</td><td>模型请求返回 function call 或消息</td><td>history 归一化后送 Responses；流事件写入状态</td><td>命令输出/文件改动/diff</td><td>网络、模型、安全、token 限制</td></tr>
+      <tr><td>Tool</td><td>必要时审批</td><td>ToolRouter→Orchestrator→Runtime</td><td>pre-hook→审批→沙箱→执行→post-hook</td><td>结果转换为 ResponseItem 进入下一次采样</td><td>文件变更与终端进程</td><td>拒绝、取消、沙箱 denial、碰撞</td></tr>
+      <tr><td>完成</td><td>查看结果、diff，继续或归档</td><td>无 follow-up/steer 后 stop hooks→TurnComplete</td><td>后台 terminal 可独立清理</td><td>LiveThread 追加 history、更新 metadata</td><td>rollout JSONL + state DB</td><td>interrupt 进入 completed/aborted 终态</td></tr>
+    </tbody></table></div>
+    <pre class="mermaid">flowchart LR
+U[用户选择项目与权限] --> TH[thread start/resume/fork]
+TH --> TU[turn/start]
+TU --> C[捕获 StepContext + ToolRouter]
+C --> M{Responses 流}
+M -->|工具调用| P{审批/策略}
+P -->|允许| X[沙箱或受控执行]
+P -->|拒绝| O[生成拒绝结果]
+X --> H[工具结果写入 history]
+O --> H
+H --> F{模型需继续或有 steer?}
+F -->|是| C
+F -->|否| E[turn/completed]
+M -->|最终消息| F</pre>
+  </section>
+
+  <section id="layers"><h2>5. 九层架构</h2>
+    <div class="table"><table><thead><tr><th>层</th><th>组件</th><th>事实判断</th></tr></thead><tbody>
+      <tr><td>1 用户与渠道</td><td>CLI/TUI、exec/CI、IDE、App、app-server clients</td><td><span class="tag confirmed">已确认</span>仓库主实现覆盖 CLI 与 app-server，云服务边界另行存在</td></tr>
+      <tr><td>2 交互工作台</td><td>TUI、thread/task、turn items、diff、terminal、approvals</td><td><span class="tag confirmed">已确认</span>流式事件驱动丰富客户端</td></tr>
+      <tr><td>3 产品应用</td><td>review、plan、goal、plugins/apps、realtime、remote control</td><td><span class="tag confirmed">已确认</span>稳定与实验 API 并存</td></tr>
+      <tr><td>4 Agent 编排</td><td>CodexThread、Session、run_turn、AgentControl/Registry</td><td><span class="tag confirmed">已确认</span>step 视图共享上下文与工具集合</td></tr>
+      <tr><td>5 工具服务</td><td>ToolRegistry/Router/Orchestrator、MCP、Code Mode、extension tools</td><td><span class="tag confirmed">已确认</span>工具按每步能力动态暴露</td></tr>
+      <tr><td>6 模型接入</td><td>ModelClient/Session、Responses、model catalog/providers/retry</td><td><span class="tag confirmed">已确认</span>模型信息决定工具与输入能力</td></tr>
+      <tr><td>7 上下文数据</td><td>ContextManager、fragments、world state、history、compaction</td><td><span class="tag confirmed">已确认</span>上下文增量构建且有硬性大小规范</td></tr>
+      <tr><td>8 知识与公共资产</td><td>AGENTS.md、skills、plugins、MCP resources、apps</td><td><span class="tag confirmed">已确认</span>本地与远程目录共同贡献能力</td></tr>
+      <tr><td>9 基础治理</td><td>ThreadStore、JSONL/SQLite、auth、permissions、guardian、sandbox、analytics</td><td><span class="tag confirmed">已确认</span>本地历史与查询元数据分离</td></tr>
+    </tbody></table></div>
+  </section>
+
+  <section id="relations"><h2>6. Agent、工具与交接关系</h2>
+    <div class="table"><table><thead><tr><th>主体</th><th>触发与输入</th><th>判断</th><th>工具/服务</th><th>输出/完成</th></tr></thead><tbody>
+      <tr><td>Root Codex Agent</td><td>用户输入、配置、历史、世界状态</td><td>工具 vs 最终消息；是否 follow-up/steer/compact</td><td>ModelClient、ToolRouter、ContextManager</td><td>AgentMessage；TurnComplete/Aborted</td></tr>
+      <tr><td>Subagent</td><td>spawn task + 可选历史 fork</td><td>角色/模型/推理强度、并发/深度许可</td><td>AgentControl/Registry、collaboration tools</td><td>消息、状态、completion notification</td></tr>
+      <tr><td>Guardian reviewer</td><td>高风险 ApprovalAction 与证据上下文</td><td>自动审查/用户审查路由、严格模式</td><td>受限工具集合、review session</td><td>ReviewDecision 与审计来源</td></tr>
+      <tr><td>Code Mode runtime</td><td>可暴露工具的程序化定义</td><td>direct/deferred/code-mode exposure</td><td>execute/wait + nested tool adapters</td><td>组合执行结果回到模型</td></tr>
+      <tr><td>MCP/App tool</td><td>server binding、schema、用户/插件选择</td><td>连接、认证、approval policy、exposure</td><td>MCP manager/cache</td><td>Tool result/resource/UI metadata</td></tr>
+    </tbody></table></div>
+    <p><span class="tag confirmed">已确认</span>多 Agent v2 在源码中是可配置能力：root/subagent 角色提示、并发槽、spawn/message/followup/wait/interrupt/list 工具按版本与模型能力注入，不应视为始终开启。</p>
+  </section>
+
+  <section id="context"><h2>7. 全局上下文与数据流</h2>
+    <div class="table"><table><thead><tr><th>模块</th><th>真实对象</th><th>生产者</th><th>消费者</th><th>更新/失效</th></tr></thead><tbody>
+      <tr><td>配置上下文</td><td>Config layers、requirements、feature flags、permission profile</td><td>系统/用户/项目/session</td><td>TurnContext、Tool plan、sandbox</td><td>部分可热更新；thread-static 选项不变</td></tr>
+      <tr><td>环境上下文</td><td>cwd、workspace roots、sandbox policy、platform</td><td>thread/turn start</td><td>shell/apply_patch/MCP capability roots</td><td>每 turn 可覆盖并捕获快照</td></tr>
+      <tr><td>历史上下文</td><td>ResponseItemEnvelope[]、history_version、token_info</td><td>用户/模型/工具/compaction</td><td>Responses request、plugins、恢复</td><td>增量追加；compaction/rollback 会改版本</td></tr>
+      <tr><td>世界状态</td><td>WorldStateSnapshot + merge patch</td><td>设置、插件、权限、模型切换</td><td>模型 prompt</td><td>与基线 diff 后作为结构化 fragment 注入</td></tr>
+      <tr><td>线程元数据</td><td>title、cwd、status、archived/pinned、goal、lineage</td><td>ThreadManager/LiveThread/app-server</td><td>列表、恢复、客户端 UI</td><td>统一 update_thread_metadata</td></tr>
+    </tbody></table></div>
+  </section>
+
+  <section id="knowledge"><h2>8. 知识与公共资产</h2>
+    <p><span class="tag confirmed">已确认</span>知识来源包括 AGENTS.md 层级指令、Skills、Plugins、MCP resources/templates、Apps、用户/开发者指令和 managed requirements。它们通过结构化 context fragments 与工具 schema 进入当前 step，而不是全部拼进一个不可追踪字符串。</p>
+    <p><span class="tag unknown">未知</span>远程 marketplace、Apps 后端和企业合规日志的完整存储/审核实现不在开源仓库内。</p>
+  </section>
+
+  <section id="models"><h2>9. 模型接入与路由</h2>
+    <div class="table"><table><thead><tr><th>能力</th><th>当前实现</th><th>边界</th></tr></thead><tbody>
+      <tr><td>会话级客户端</td><td><span class="tag confirmed">已确认</span>ModelClientSession 在 turn 内复用 WebSocket/粘性路由状态</td><td>服务端路由算法不可见</td></tr>
+      <tr><td>模型能力驱动工具</td><td><span class="tag confirmed">已确认</span>shell type、apply_patch type、namespace/tool search、modalities 影响工具表</td><td>工具集合不是固定常量</td></tr>
+      <tr><td>Responses 事件</td><td><span class="tag confirmed">已确认</span>输出项、delta、reasoning、tool input、usage、rate limits 等流事件</td><td>模型内部推理不可见且不应还原</td></tr>
+      <tr><td>上下文治理</td><td><span class="tag confirmed">已确认</span>token status、pre/mid-turn compaction、new context window、输出截断</td><td>摘要保真度需运行评估</td></tr>
+    </tbody></table></div>
+  </section>
+
+  <section id="tech"><h2>10. 技术选型判断</h2>
+    <div class="table"><table><thead><tr><th>需要能力</th><th>已确认选型</th><th>匹配理由</th><th>不能确认</th></tr></thead><tbody>
+      <tr><td>高可靠本地控制面</td><td>Rust/Tokio 多 crate workspace</td><td>跨平台进程、并发、协议与安全边界强类型</td><td>闭源桌面层实现</td></tr>
+      <tr><td>多客户端</td><td>app-server JSON-RPC + generated TS/JSON schema</td><td>把 rich UI 与 core 解耦，保留双向审批与流事件</td><td>所有客户端是否功能等价</td></tr>
+      <tr><td>持久历史与查询</td><td>rollout JSONL + SQLite metadata</td><td>canonical append 与列表/搜索分离</td><td>远程 ThreadStore 后端</td></tr>
+      <tr><td>跨平台隔离</td><td>Seatbelt、bubblewrap/Landlock、Windows sandbox</td><td>按平台执行同一权限语义并在无法等价时失败关闭</td><td>平台外容器/微虚拟机策略</td></tr>
+    </tbody></table></div>
+  </section>
+
+  <section id="entities"><h2>11. 数据实体与 ER</h2>
+    <div class="table"><table><thead><tr><th>实体模板</th><th>源码对应</th><th>关键字段</th><th>关系</th></tr></thead><tbody>
+      <tr><td>Thread</td><td>CodexThread/LiveThread</td><td>threadId、source、cwd、metadata、history</td><td>包含 Turn；可 fork/归档</td></tr>
+      <tr><td>Turn</td><td>TurnContext/active_turn</td><td>turnId、model、permissions、status、usage</td><td>包含 Items/Steps</td></tr>
+      <tr><td>Item</td><td>ResponseItem/ThreadItem</td><td>type、content、callId、status</td><td>用户/模型/工具事件单元</td></tr>
+      <tr><td>Tool</td><td>ToolSpec/CoreToolRuntime</td><td>ToolName、schema、exposure、executor</td><td>由 Router 选择并产生 result</td></tr>
+      <tr><td>Agent</td><td>AgentControl/Registry</td><td>path、role、status、parent</td><td>与子 Thread/消息关联</td></tr>
+      <tr><td>Permission/Approval</td><td>PermissionProfile/ApprovalAction</td><td>filesystem、network、reviewer、decision</td><td>约束 ToolCall</td></tr>
+    </tbody></table></div>
+    <pre class="mermaid">erDiagram
+THREAD ||--o{ TURN : contains
+TURN ||--o{ ITEM : streams
+THREAD ||--o{ HISTORY_ITEM : persists
+TURN ||--o{ TOOL_CALL : dispatches
+TOOL_CALL ||--|| TOOL_RESULT : returns
+TOOL_CALL }o--|| PERMISSION_PROFILE : constrained_by
+TOOL_CALL ||--o| APPROVAL : may_require
+THREAD ||--o{ AGENT : coordinates
+AGENT ||--o{ AGENT : spawns
+THREAD }o--o{ PLUGIN : enables
+PLUGIN ||--o{ MCP_TOOL : contributes</pre>
+  </section>
+
+  <section id="sequence"><h2>12. 核心时序</h2>
+    <pre class="mermaid">sequenceDiagram
+actor U as 用户/客户端
+participant AS as AppServer/TUI
+participant TH as CodexThread
+participant S as Session run_turn
+participant CM as ContextManager
+participant MC as ModelClient
+participant TR as ToolRouter
+participant SEC as Approval/Sandbox
+U->>AS: thread/start + turn/start
+AS->>TH: submit(Op)
+TH->>S: run_turn(input, TurnContext)
+S->>CM: 记录输入/世界状态，准备 history
+S->>TR: 按 step 构建工具视图
+S->>MC: Responses sampling
+MC-->>S: delta / tool call / final item
+alt tool call
+S->>TR: dispatch(call)
+TR->>SEC: policy + approval + sandbox
+SEC-->>TR: decision/execution result
+TR-->>S: ResponseItem tool result
+S->>CM: 追加结果
+S->>MC: 下一次 sampling
+end
+S-->>TH: TurnComplete/Aborted
+TH-->>AS: item/turn notifications
+AS-->>U: 流式结果与状态</pre>
+  </section>
+
+  <section id="panorama"><h2>13. 产品全景图</h2>
+    <pre class="mermaid">flowchart TB
+subgraph L1[1 用户与渠道]
+CLI[CLI/TUI]:::ok
+IDE[IDE/App Clients]:::ok
+CI[exec/SDK/CI]:::ok
+end
+subgraph L2[2 交互工作台]
+UI[Threads·Turns·Items·Diff·Terminal·Approval]:::ok
+end
+subgraph L3[3 产品应用]
+APP[Plan·Review·Goal·Plugins·Apps·Realtime]:::ok
+API[App Server JSON-RPC]:::ok
+end
+subgraph L4[4 Agent 编排]
+CT[CodexThread/Session]:::ok
+RT[run_turn + AgentControl]:::ok
+end
+subgraph L5[5 工具服务]
+ROUTER[ToolRegistry/Router/Orchestrator]:::ok
+TOOLS[Shell·Patch·MCP·CodeMode·Collaboration]:::ok
+end
+subgraph L6[6 模型接入]
+MODEL[ModelClient + Responses + Catalog]:::ok
+end
+subgraph L7[7 上下文与数据]
+CTX[ContextManager + Fragments + WorldState]:::ok
+COMP[Compaction/Token Budget]:::ok
+end
+subgraph L8[8 知识与资产]
+KN[AGENTS.md·Skills·Plugins·MCP Resources]:::ok
+end
+subgraph L9[9 基础设施治理]
+STORE[ThreadStore JSONL/SQLite]:::ok
+SEC[Permissions·Guardian·Sandbox·Network]:::ok
+CLOUD[闭源服务端调度]:::unknown
+RISK[Core 复杂度/兼容面风险]:::risk
+end
+CLI -->|操作| UI
+IDE -->|JSON-RPC| API
+CI -->|命令/SDK| CT
+UI -->|提交| CT
+API -->|驱动| CT
+APP -->|配置/触发| CT
+CT -->|执行| RT
+RT -->|采样| MODEL
+RT -->|构建/分派| ROUTER
+ROUTER -->|调用| TOOLS
+RT -->|读写| CTX
+CTX -->|压缩| COMP
+KN -->|注入/注册| CTX
+CT -->|持久化| STORE
+ROUTER -->|权限决策| SEC
+MODEL -.->|远端边界| CLOUD
+CT -.->|演进复杂度| RISK
+classDef ok fill:#dff6e9,stroke:#16794b,color:#10251a
+classDef unknown fill:#eceff3,stroke:#667085,color:#344054
+classDef risk fill:#fee4e2,stroke:#b42318,color:#5f1712</pre>
+    <p class="legend">实线为【已确认】调用/写入；虚线连接【未知】远端边界与显式风险。没有将闭源模型调度、计费数据库或云队列画成已确认。</p>
+  </section>
+
+  <section id="asis"><h2>14. As-Is</h2>
+    <div class="table"><table><thead><tr><th>能力</th><th>当前可见实现</th><th>局限</th></tr></thead><tbody>
+      <tr><td>执行循环</td><td>上下文、工具与流事件在每个 step 保持一致视图</td><td>run_turn 与 core 仍非常复杂</td></tr>
+      <tr><td>可嵌入性</td><td>app-server 覆盖认证、历史、审批、流式事件</td><td>WebSocket 与部分 API 明确处于实验状态</td></tr>
+      <tr><td>工具生态</td><td>内建/MCP/扩展/动态/托管工具统一路由</td><td>暴露模式、碰撞、模型能力矩阵复杂</td></tr>
+      <tr><td>安全</td><td>权限、审批 reviewer、hooks、沙箱、网络多层控制</td><td>错误组合或平台能力差异仍需治理</td></tr>
+      <tr><td>持久化</td><td>JSONL canonical history + SQLite metadata</td><td>双写兼容与冷/热 thread 路径增加状态面</td></tr>
+    </tbody></table></div>
+  </section>
+
+  <section id="tobe"><h2>15. To-Be 建议</h2>
+    <div class="table"><table><thead><tr><th>优先级</th><th>补强项</th><th>建议架构</th><th>预期效果</th></tr></thead><tbody>
+      <tr><td>P0</td><td>运行视图解释器</td><td><span class="tag suggested">建议设计</span>提供每 turn 的“为何暴露这些工具/权限/模型”的可导出决策快照</td><td>降低动态矩阵不可解释性</td></tr>
+      <tr><td>P0</td><td>安全策略单一证明</td><td><span class="tag suggested">建议设计</span>把 permission profile→approval→sandbox→network 的最终有效策略生成机器可验证证明</td><td>避免层间降级与误判</td></tr>
+      <tr><td>P1</td><td>Thread 一致性检查</td><td><span class="tag suggested">建议设计</span>JSONL/SQLite 元数据定期 reconcile，并显式报告修复</td><td>降低双存储漂移</td></tr>
+      <tr><td>P1</td><td>工具兼容契约</td><td><span class="tag suggested">建议设计</span>对 ToolExposure、Code Mode、MCP schema 建立版本化兼容测试矩阵</td><td>减少模型/工具升级回归</td></tr>
+      <tr><td>P2</td><td>Core 继续解耦</td><td><span class="tag suggested">建议设计</span>沿 codex-tools 方向逐步抽出稳定工具宿主接口</td><td>降低 codex-core 变更半径</td></tr>
+    </tbody></table></div>
+  </section>
+
+  <section id="risks"><h2>16. 风险</h2>
+    <div class="table"><table><thead><tr><th>优先级</th><th>风险</th><th>触发</th><th>影响</th><th>当前控制</th></tr></thead><tbody>
+      <tr><td class="risk">P0</td><td>权限/沙箱组合降级</td><td>平台不支持精确 deny-read 或错误使用 full access</td><td>越权读取/写入/联网</td><td>无法等价时 fail closed；内建 profiles 与 managed requirements</td></tr>
+      <tr><td class="risk">P0</td><td>远程 WebSocket 暴露</td><td>非 loopback 且未配置认证/TLS</td><td>远程控制面被访问</td><td>官方文档显式警告；auth flags；Origin 拒绝</td></tr>
+      <tr><td class="risk">P1</td><td>工具碰撞或暴露错误</td><td>MCP/插件/Code Mode 归一化到同名</td><td>错误工具被模型调用或启动失败</td><td>collision detection、exposure policy、error_on_tool_collisions</td></tr>
+      <tr><td class="risk">P1</td><td>历史/元数据漂移</td><td>JSONL 与 SQLite 更新路径异常</td><td>列表状态和真实历史不一致</td><td>LiveThread/ThreadManager 统一入口与兼容写</td></tr>
+      <tr><td class="risk">P1</td><td>多 Agent 放大</td><td>并发槽、深度、长等待、跨 agent 消息</td><td>成本、文件冲突、状态复杂</td><td>深度/并发限制、status/interrupt/wait 工具</td></tr>
+      <tr><td class="risk">P2</td><td>实验 API 漂移</td><td>客户端依赖未 opt-in 或变更接口</td><td>集成中断</td><td>experimentalApi capability 与版本生成 schema</td></tr>
+    </tbody></table></div>
+  </section>
+
+  <section id="trace"><h2>17. 架构组件追溯</h2>
+    <div class="table"><table><thead><tr><th>组件</th><th>为什么进入主图</th><th>证据</th><th>置信度</th></tr></thead><tbody>
+      <tr><td>CodexThread/Session/run_turn</td><td>核心业务循环与操作提交路径</td><td>CDX-E05</td><td>高·已确认</td></tr>
+      <tr><td>App Server</td><td>官方富客户端接口与开源实现</td><td>CDX-E03/E04</td><td>高·已确认</td></tr>
+      <tr><td>ToolRouter</td><td>每 step 聚合全部工具来源</td><td>CDX-E06/E07</td><td>高·已确认</td></tr>
+      <tr><td>ContextManager</td><td>历史、world state、token 与 prompt 归一化</td><td>CDX-E12</td><td>高·已确认</td></tr>
+      <tr><td>ThreadStore</td><td>canonical history 与 metadata 存储边界</td><td>CDX-E08</td><td>高·已确认</td></tr>
+      <tr><td>闭源服务端调度</td><td>网络边界存在但实现不在仓库，故仅灰色未知节点</td><td>CDX-E03/E05</td><td>未知</td></tr>
+    </tbody></table></div>
+  </section>
+
+  <section id="unknowns"><h2>18. 未知与验证清单</h2>
+    <ul><li><span class="tag unknown">未知</span>闭源模型路由、账号配额、计费、云任务调度与企业合规日志的完整实现。</li><li><span class="tag unknown">未知</span>桌面 App、Web、IDE 与当前 open-source app-server 的精确版本对应关系。</li><li><span class="tag unknown">未知</span>真实长会话中 compaction 的信息保真度、工具选择质量和 token 成本。</li><li><span class="tag unknown">未知</span>所有平台/权限 profile/网络策略组合的运行强制效果；需跨平台集成测试。</li></ul>
+    <p class="meta">本报告不声称获得官方隐藏 Prompt 或思维链；源码中的公开提示文本只作为可观察实现证据，不等同于模型内部推理。</p>
+  </section>
+</main><a class="top" href="#top">返回顶部</a>
+<script type="module">import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';mermaid.initialize({startOnLoad:true,theme:matchMedia('(prefers-color-scheme:dark)').matches?'dark':'default',securityLevel:'loose'});</script>
+</body></html>

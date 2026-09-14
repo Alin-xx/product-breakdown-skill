@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="证据驱动的 AI 产品架构拆解报告模板">
+  <title>产品架构拆解报告模板</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --canvas: #f1f3ef;
+      --surface: #fafbf8;
+      --raised: #fefefc;
+      --ink: #1c211e;
+      --ink-2: #505852;
+      --ink-3: #737c76;
+      --rule: rgba(28, 33, 30, .12);
+      --rule-strong: rgba(28, 33, 30, .2);
+      --accent: #0f766e;
+      --accent-soft: rgba(15, 118, 110, .09);
+      --confirmed: #18794e;
+      --confirmed-soft: rgba(24, 121, 78, .09);
+      --inferred: #946200;
+      --inferred-soft: rgba(148, 98, 0, .1);
+      --suggested: #175cd3;
+      --suggested-soft: rgba(23, 92, 211, .09);
+      --unknown: #667085;
+      --unknown-soft: rgba(102, 112, 133, .1);
+      --risk: #b42318;
+      --risk-soft: rgba(180, 35, 24, .08);
+      --radius-control: .55rem;
+      --radius-panel: .9rem;
+      --shadow-raised: 0 0 0 1px rgba(0, 0, 0, .035), 0 2px 7px rgba(0, 0, 0, .05);
+      --content: 76rem;
+      --measure: 46rem;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --canvas: #111512;
+        --surface: #171c18;
+        --raised: #1b211d;
+        --ink: #edf2ee;
+        --ink-2: #b4beb7;
+        --ink-3: #89948d;
+        --rule: rgba(237, 242, 238, .1);
+        --rule-strong: rgba(237, 242, 238, .18);
+        --accent: #5bd0c4;
+        --accent-soft: rgba(91, 208, 196, .1);
+        --confirmed: #61d394;
+        --confirmed-soft: rgba(97, 211, 148, .1);
+        --inferred: #edb84f;
+        --inferred-soft: rgba(237, 184, 79, .1);
+        --suggested: #76a9ff;
+        --suggested-soft: rgba(118, 169, 255, .1);
+        --unknown: #a7b0bd;
+        --unknown-soft: rgba(167, 176, 189, .1);
+        --risk: #ff8c82;
+        --risk-soft: rgba(255, 140, 130, .1);
+        --shadow-raised: none;
+      }
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      background: var(--canvas);
+      color: var(--ink);
+      font: 400 16px/1.7 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      text-rendering: optimizeLegibility;
+    }
+    a { color: inherit; text-decoration-color: color-mix(in srgb, var(--accent) 55%, transparent); text-underline-offset: .18em; }
+    a:hover { color: var(--accent); }
+    a:focus-visible, button:focus-visible { outline: 3px solid color-mix(in srgb, var(--accent) 55%, transparent); outline-offset: 3px; border-radius: .25rem; }
+    code, pre, .evidence-id { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-variant-numeric: tabular-nums; }
+    p, li { text-wrap: pretty; }
+    h1, h2, h3 { font-weight: 600; letter-spacing: -.025em; text-wrap: balance; }
+    h1 { max-width: 18ch; margin: 0; font-size: clamp(2.2rem, 5vw, 4.4rem); line-height: 1.02; }
+    h2 { margin: 0; font-size: clamp(1.55rem, 2.7vw, 2.15rem); line-height: 1.15; scroll-margin-top: 5rem; }
+    h3 { margin: 2rem 0 .6rem; font-size: 1.08rem; line-height: 1.3; }
+    p { max-width: var(--measure); margin: .7rem 0; }
+
+    .skip-link { position: fixed; left: 1rem; top: -5rem; z-index: 100; padding: .65rem .9rem; background: var(--ink); color: var(--surface); border-radius: var(--radius-control); }
+    .skip-link:focus { top: 1rem; }
+    .shell { width: min(100% - 2rem, var(--content)); margin-inline: auto; }
+    .masthead { padding: clamp(3.5rem, 9vw, 8rem) 0 2rem; border-bottom: 1px solid var(--rule); }
+    .eyebrow { margin-bottom: 1rem; color: var(--accent); font: 600 .78rem/1.3 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; text-transform: uppercase; }
+    .deck { max-width: 45rem; margin: 1.5rem 0 0; color: var(--ink-2); font-size: clamp(1.05rem, 2vw, 1.25rem); }
+    .meta-line { display: flex; flex-wrap: wrap; gap: .55rem 1.2rem; margin-top: 2rem; color: var(--ink-3); font-size: .875rem; }
+
+    .summary-strip { display: grid; grid-template-columns: 1.6fr repeat(3, 1fr); border-bottom: 1px solid var(--rule); }
+    .summary-strip > div { min-width: 0; padding: 1.25rem 1.4rem 1.35rem; border-right: 1px solid var(--rule); }
+    .summary-strip > div:first-child { padding-left: 0; }
+    .summary-strip > div:last-child { border-right: 0; padding-right: 0; }
+    .summary-label { color: var(--ink-3); font-size: .78rem; }
+    .summary-value { margin-top: .32rem; font-weight: 600; line-height: 1.35; }
+
+    .layout { display: grid; grid-template-columns: 14rem minmax(0, 1fr); gap: clamp(2rem, 5vw, 5rem); padding: 2rem 0 6rem; }
+    .toc { align-self: start; position: sticky; top: 1rem; max-height: calc(100vh - 2rem); overflow: auto; padding-right: 1rem; }
+    .toc strong { display: block; margin-bottom: .65rem; font-size: .82rem; }
+    .toc a { display: block; padding: .38rem .6rem; color: var(--ink-3); font-size: .84rem; text-decoration: none; border-left: 2px solid var(--rule); }
+    .toc a:hover { color: var(--ink); border-left-color: var(--accent); background: var(--accent-soft); }
+    .report { min-width: 0; }
+    section { padding: clamp(2.5rem, 6vw, 5rem) 0; border-top: 1px solid var(--rule); }
+    section:first-child { padding-top: 1rem; border-top: 0; }
+    .section-kicker { margin: 0 0 .55rem; color: var(--accent); font: 600 .76rem/1.3 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .06em; }
+    .lead { margin: 1rem 0 2rem; color: var(--ink-2); font-size: 1.08rem; }
+
+    .finding { margin: 1.6rem 0; padding: 1.25rem 1.4rem; background: var(--raised); border-left: 3px solid var(--accent); border-radius: 0 var(--radius-panel) var(--radius-panel) 0; box-shadow: var(--shadow-raised); }
+    .finding strong { display: block; margin-bottom: .35rem; }
+    .finding p { margin: 0; }
+    .risk-box { border-left-color: var(--risk); background: var(--risk-soft); }
+
+    .evidence-legend { display: flex; flex-wrap: wrap; gap: .55rem; margin: 1.4rem 0; }
+    .tag { display: inline-flex; align-items: center; gap: .38rem; padding: .22rem .58rem; border: 1px solid currentColor; border-radius: 999px; font-size: .78rem; font-weight: 600; line-height: 1.4; white-space: nowrap; }
+    .tag::before { content: ""; width: .42rem; height: .42rem; background: currentColor; border-radius: 50%; }
+    .confirmed { color: var(--confirmed); background: var(--confirmed-soft); }
+    .inferred { color: var(--inferred); background: var(--inferred-soft); }
+    .suggested { color: var(--suggested); background: var(--suggested-soft); }
+    .unknown { color: var(--unknown); background: var(--unknown-soft); }
+    .risk { color: var(--risk); background: var(--risk-soft); }
+
+    .table-scroll { width: 100%; margin: 1.5rem 0; overflow-x: auto; overscroll-behavior-inline: contain; }
+    table { width: 100%; min-width: 48rem; border-collapse: collapse; font-size: .9rem; }
+    th { padding: .7rem .8rem; color: var(--ink-3); font-size: .78rem; font-weight: 600; text-align: left; white-space: nowrap; border-bottom: 2px solid var(--rule-strong); }
+    td { padding: .85rem .8rem; vertical-align: top; border-bottom: 1px solid var(--rule); }
+    tbody tr:hover { background: color-mix(in srgb, var(--accent) 4%, transparent); }
+    td:first-child, th:first-child { padding-left: 0; }
+    td:last-child, th:last-child { padding-right: 0; }
+
+    .diagram { margin: 1.5rem 0; padding: 1rem; overflow: auto; background: var(--raised); border-radius: var(--radius-panel); box-shadow: var(--shadow-raised); }
+    .diagram-title { margin-bottom: .6rem; font-weight: 600; }
+    .mermaid { min-width: 42rem; overflow: auto; color: var(--ink); }
+    .caption { margin-top: .65rem; color: var(--ink-3); font-size: .82rem; }
+    .back-top { display: inline-block; margin-top: 1.5rem; color: var(--ink-3); font-size: .82rem; }
+    footer { padding: 2rem 0 4rem; border-top: 1px solid var(--rule); color: var(--ink-3); font-size: .84rem; }
+
+    @media (max-width: 860px) {
+      .shell { width: min(100% - 1.5rem, var(--content)); }
+      .summary-strip { grid-template-columns: 1fr 1fr; }
+      .summary-strip > div { border-bottom: 1px solid var(--rule); }
+      .summary-strip > div:nth-child(2) { border-right: 0; padding-right: 0; }
+      .summary-strip > div:nth-child(3) { padding-left: 0; }
+      .summary-strip > div:nth-last-child(-n+2) { border-bottom: 0; }
+      .layout { grid-template-columns: 1fr; gap: 1.25rem; }
+      .toc { position: static; max-height: none; display: flex; gap: .35rem; overflow-x: auto; padding: 0 0 .75rem; border-bottom: 1px solid var(--rule); }
+      .toc strong { display: none; }
+      .toc a { flex: 0 0 auto; border-left: 0; border-bottom: 2px solid var(--rule); }
+    }
+
+    @media (max-width: 520px) {
+      body { font-size: 16px; }
+      .masthead { padding-top: 3.5rem; }
+      .summary-strip { grid-template-columns: 1fr; }
+      .summary-strip > div { padding: 1rem 0; border-right: 0; border-bottom: 1px solid var(--rule); }
+      .summary-strip > div:nth-last-child(-n+2) { border-bottom: 1px solid var(--rule); }
+      .summary-strip > div:last-child { border-bottom: 0; }
+      section { padding: 3rem 0; }
+      .finding { padding: 1rem; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+    }
+
+    @media print {
+      :root { color-scheme: light; --canvas: #fff; --surface: #fff; --raised: #fff; --ink: #111; --ink-2: #333; --ink-3: #555; --rule: rgba(0,0,0,.16); --rule-strong: rgba(0,0,0,.3); --shadow-raised: none; }
+      body { background: #fff; font-size: 10.5pt; }
+      .skip-link, .toc, .back-top { display: none !important; }
+      .shell { width: 100%; }
+      .masthead { padding: 0 0 1.2rem; }
+      .layout { display: block; padding: 0; }
+      section { break-inside: auto; padding: 1.3rem 0; }
+      h2, h3 { break-after: avoid; }
+      thead { display: table-header-group; }
+      tr, .finding, .diagram { break-inside: avoid; }
+      .table-scroll, .diagram { overflow: visible; }
+      table { min-width: 0; font-size: 8.5pt; }
+      a { color: inherit; text-decoration: none; }
+    }
+  </style>
+</head>
+<body>
+  <a class="skip-link" href="#content">跳到正文</a>
+
+  <header class="masthead" id="top">
+    <div class="shell">
+      <div class="eyebrow">Product architecture · Evidence snapshot</div>
+      <h1>产品名称：架构拆解报告</h1>
+      <p class="deck">用一句话说明产品定位、此次拆解范围和最重要的结构性判断。这里不写营销口号，也不把推断表述为事实。</p>
+      <div class="meta-line" aria-label="报告元数据">
+        <span>快照：YYYY-MM-DD</span>
+        <span>材料：页面 / 截图 / 源码 / 官方资料</span>
+        <span>版本：commit 或产品版本</span>
+      </div>
+    </div>
+  </header>
+
+  <div class="shell summary-strip" aria-label="报告摘要">
+    <div><div class="summary-label">核心判断</div><div class="summary-value">用一条可追溯结论概括产品的架构重心</div></div>
+    <div><div class="summary-label">主要证据</div><div class="summary-value">E01–E18</div></div>
+    <div><div class="summary-label">关键风险</div><div class="summary-value">状态与资产一致性</div></div>
+    <div><div class="summary-label">置信边界</div><div class="summary-value">公开可见实现</div></div>
+  </div>
+
+  <div class="shell layout">
+    <nav class="toc" aria-label="报告目录">
+      <strong>目录</strong>
+      <a href="#summary">执行摘要</a><a href="#evidence">证据</a><a href="#domains">功能域</a><a href="#e2e">端到端</a><a href="#layers">分层</a><a href="#relations">关系</a><a href="#context">上下文</a><a href="#knowledge">知识</a><a href="#models">模型</a><a href="#tech">选型</a><a href="#entities">实体</a><a href="#sequence">时序</a><a href="#panorama">全景</a><a href="#asis">As-Is</a><a href="#tobe">To-Be</a><a href="#risks">风险</a><a href="#trace">追溯</a><a href="#unknowns">未知</a>
+    </nav>
+
+    <main class="report" id="content">
+      <section id="summary">
+        <div class="section-kicker">01 · Summary</div><h2>执行摘要</h2>
+        <p class="lead">先给结论，再解释判断范围。读者在这里应能决定是否继续查看证据、架构或风险章节。</p>
+        <div class="finding"><strong>核心发现</strong><p><span class="tag confirmed">已确认</span> 描述一个由直接证据支持的关键产品事实。</p></div>
+        <div class="evidence-legend" aria-label="证据等级图例"><span class="tag confirmed">已确认</span><span class="tag inferred">合理推断</span><span class="tag suggested">建议设计</span><span class="tag unknown">未知</span></div>
+      </section>
+
+      <section id="evidence">
+        <div class="section-kicker">02 · Evidence</div><h2>证据与范围</h2>
+        <p class="lead">记录材料、时间边界、不可访问项和证据等级，避免读者把报告当作官方内部实现说明。</p>
+        <div class="table-scroll"><table><thead><tr><th>证据 ID</th><th>来源</th><th>可确认事实</th><th>等级</th></tr></thead><tbody><tr><td class="evidence-id">E01</td><td>页面或源码位置</td><td>保留可复核的原始信号</td><td><span class="tag confirmed">已确认</span></td></tr><tr><td class="evidence-id">E02</td><td>多条证据组合</td><td>说明推断链与不可见边界</td><td><span class="tag inferred">合理推断</span></td></tr></tbody></table></div>
+      </section>
+
+      <section id="domains"><div class="section-kicker">03 · Domains</div><h2>功能域</h2><p class="lead">按用户可理解的能力域组织入口、核心动作、状态、资产和异常。</p><div class="finding"><strong>阅读提示</strong><p>功能域不是代码目录的直接翻译；同一能力跨越多个层时要保留其端到端职责。</p></div></section>
+
+      <section id="e2e">
+        <div class="section-kicker">04 · End to end</div><h2>端到端五流</h2><p class="lead">在同一时间轴上对齐用户交互、Agent 控制、工具调用、数据上下文和资产流。</p>
+        <div class="diagram"><div class="diagram-title">主流程与失败分支</div><pre class="mermaid">flowchart LR
+U[用户输入] --> W[工作台反馈]
+W --> C{确认条件满足?}
+C -- 是 --> X[执行与验证]
+C -- 否 --> R[补充或修改]
+R --> W
+X --> O[结果与状态写回]</pre><p class="caption">结论：主流程必须包含确认、执行验证和可见状态写回。</p></div>
+      </section>
+
+      <section id="layers"><div class="section-kicker">05 · Layers</div><h2>分层架构</h2><p class="lead">按九层检查，但只把有证据或清晰设计理由的组件放入主图。</p></section>
+      <section id="relations"><div class="section-kicker">06 · Relations</div><h2>Agent、工具与交接</h2><p class="lead">列清输入、判断、工具、输出、上下文读写、完成条件与失败处理。</p></section>
+      <section id="context"><div class="section-kicker">07 · Context</div><h2>全局上下文与数据流</h2><p class="lead">区分事实字段、语义化推导字段和建议字段，并检查版本、引用与失效规则。</p></section>
+      <section id="knowledge"><div class="section-kicker">08 · Knowledge</div><h2>知识与公共资产</h2><p class="lead">区分产品知识、项目数据、公共素材、用户私有资产和反馈数据。</p></section>
+      <section id="models"><div class="section-kicker">09 · Models</div><h2>模型接入与路由</h2><p class="lead">页面只出现单一模型时，不推断完整的动态路由或供应商策略。</p></section>
+      <section id="tech"><div class="section-kicker">10 · Technology</div><h2>技术选型判断</h2><p class="lead">采用“需要能力 → 可能类别 → 推荐方案 → 不能确认原因”的结构。</p></section>
+
+      <section id="entities">
+        <div class="section-kicker">11 · Entities</div><h2>数据实体与 ER</h2><p class="lead">实体名是分析模型，不冒充真实数据库表名。</p>
+        <div class="diagram"><div class="diagram-title">核心实体关系</div><pre class="mermaid">erDiagram
+USER ||--o{ PROJECT : owns
+PROJECT ||--o{ WORKFLOW : runs
+WORKFLOW ||--o{ TASK : contains
+TASK ||--o{ TOOL_CALL : invokes
+PROJECT ||--o{ ASSET : produces</pre><p class="caption">结论：项目、工作流、任务、工具调用和资产需要稳定引用与版本关系。</p></div>
+      </section>
+
+      <section id="sequence">
+        <div class="section-kicker">12 · Sequence</div><h2>核心时序</h2><p class="lead">时序图区分确认、执行、验证、失败、重试和状态写回。</p>
+        <div class="diagram"><div class="diagram-title">一次任务执行</div><pre class="mermaid">sequenceDiagram
+actor U as 用户
+participant W as 工作台
+participant A as Agent/协调器
+participant T as 工具
+U->>W: 提交需求
+W->>A: 建立任务上下文
+A-->>W: 请求确认
+U->>W: 确认
+W->>A: 执行
+A->>T: 调用
+T-->>A: 结果或错误
+A-->>W: 验证并写回状态</pre><p class="caption">结论：完成不能只由最终消息确认，还需结果和状态信号。</p></div>
+      </section>
+
+      <section id="panorama"><div class="section-kicker">13 · Panorama</div><h2>产品全景图</h2><p class="lead">全景图展示层与关键关系；高密度字段仍回到表格阅读。</p></section>
+      <section id="asis"><div class="section-kicker">14 · As-Is</div><h2>当前可见实现</h2><p class="lead"><span class="tag confirmed">已确认</span> 与 <span class="tag inferred">合理推断</span> 分开呈现，不混入理想方案。</p></section>
+      <section id="tobe"><div class="section-kicker">15 · To-Be</div><h2>建议设计</h2><p class="lead"><span class="tag suggested">建议设计</span> 说明触发条件、架构措施、预期效果和优先级。</p></section>
+
+      <section id="risks">
+        <div class="section-kicker">16 · Risks</div><h2>风险</h2><p class="lead">风险需要触发条件、影响、当前控制、建议控制和证据，而不是泛化警告。</p>
+        <div class="finding risk-box"><strong><span class="tag risk">风险</span> 示例风险</strong><p>当聊天完成文案与任务状态冲突时，用户可能误认为资产已经可用；建议以状态与资产交叉验证。</p></div>
+      </section>
+
+      <section id="trace"><div class="section-kicker">17 · Traceability</div><h2>架构组件追溯</h2><p class="lead">为主图中的组件记录“为什么需要、由什么证据支持、属于何种等级”。</p></section>
+      <section id="unknowns"><div class="section-kicker">18 · Unknowns</div><h2>未知与验证清单</h2><p class="lead"><span class="tag unknown">未知</span> 证据不足的结论保留为问题，并给出最小验证方式。</p><a class="back-top" href="#top">返回顶部 ↑</a></section>
+    </main>
+  </div>
+
+  <footer><div class="shell">此模板用于证据驱动的产品架构拆解。复制后应替换内容、主色、证据链接与快照信息，并执行结构和视觉验收。</div></footer>
+
+  <script type="module">
+    import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+    mermaid.initialize({ startOnLoad: true, securityLevel: "loose", theme: matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "neutral" });
+  </script>
+</body>
+</html>

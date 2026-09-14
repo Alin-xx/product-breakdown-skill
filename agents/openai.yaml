@@ -1,0 +1,5 @@
+interface:
+  display_name: "产品拆解"
+  short_description: "证据化拆解 AI 产品并生成经过视觉验收的精美 HTML 报告"
+  brand_color: "#0F766E"
+  default_prompt: "使用 $product-architecture-reverse-engineering 证据化拆解这个 AI 产品，并生成具有清晰信息层级、架构图和视觉质量验收的独立 HTML 报告。"
